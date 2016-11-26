@@ -23,7 +23,7 @@ export LANG=C
 export LC_ALL=C
 
 # LIBS
-LIBS=-lstdc++
+LIBS=-lstdc++ -lm -lfftw3
 CUDALIBS=-L/usr/local/cuda/lib64/ -lcuda -lcudart
 # Debug Flags
 ICC_DBCFLAGS= -O0 -C -I./hdr -I./src/qvoronoi
@@ -78,6 +78,16 @@ obj/data/lattice_anisotropy.o \
 obj/main/initialise_variables.o \
 obj/main/main.o \
 obj/main/material.o \
+obj/micromagnetic/calculate_A.o \
+obj/micromagnetic/calculate_alpha.o \
+obj/micromagnetic/calculate_chi_para.o \
+obj/micromagnetic/calculate_chi_perp.o \
+obj/micromagnetic/calculate_gamma.o \
+obj/micromagnetic/calculate_ku.o \
+obj/micromagnetic/calculate_ms.o \
+obj/micromagnetic/calculate_tc.o \
+obj/micromagnetic/fields.o \
+obj/micromagnetic/LLB.o \
 obj/mpi/LLGHeun-mpi.o \
 obj/mpi/LLGMidpoint-mpi.o \
 obj/mpi/mpi_generic.o \
@@ -96,6 +106,7 @@ obj/program/lagrange.o \
 obj/program/LLB_Boltzmann.o \
 obj/program/partial_hysteresis.o \
 obj/program/static_hysteresis.o \
+obj/program/setting.o \
 obj/program/time_series.o \
 obj/program/temperature_pulse.o \
 obj/program/localised_temperature_pulse.o \
@@ -150,6 +161,7 @@ obj/qvoronoi/userprintf_rbox.o\
 include src/create/makefile
 include src/gpu/makefile
 include src/ltmp/makefile
+include src/micromagnetic/makefile
 include src/simulate/makefile
 
 ICC_OBJECTS=$(OBJECTS:.o=_i.o)

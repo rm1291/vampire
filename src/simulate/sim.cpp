@@ -42,11 +42,13 @@
 
 // Vampire Header files
 #include "atoms.hpp"
+#include "cells.hpp"
 #include "program.hpp"
 #include "demag.hpp"
 #include "errors.hpp"
 #include "gpu.hpp"
 #include "material.hpp"
+#include "micromagnetic.hpp"
 #include "random.hpp"
 #include "sim.hpp"
 #include "stats.hpp"
@@ -71,7 +73,7 @@ namespace sim{
    uint64_t output_rate_counter=0;
 
 	bool ext_demag=false;
-
+	int N = 0;
 	double Tmax=300.0;
 	double Tmin=0.0;
 	double Teq=300.0;
@@ -274,10 +276,9 @@ int run(){
 
    // Precalculate initial statistics
    stats::update(atoms::x_spin_array, atoms::y_spin_array, atoms::z_spin_array, atoms::m_spin_array);
-
    // Initialize GPU acceleration if enabled
    if(gpu::acceleration) gpu::initialize();
-
+	if (micromagnetic::discretisation_micromagnetic) micromagnetic::initialize(cells::num_cells,stats::num_atoms, mp::num_materials,atoms::cell_array, atoms::neighbour_list_array,atoms::neighbour_list_start_index, atoms::neighbour_list_end_index,atoms::type_array, mp::material, atoms::x_coord_array,atoms::y_coord_array,atoms::z_coord_array,cs::unit_cell_size[0],cs::unit_cell_size[1],cs::unit_cell_size[2], cells::volume_array, sim::temperature, cells::num_atoms_in_unit_cell, cells::size, cs::system_dimensions[0],cs::system_dimensions[1],cs::system_dimensions[2] );
 	// Select program to run
 	switch(sim::program){
 		case 0:
@@ -416,13 +417,41 @@ int run(){
 			program::boltzmann_dist();
 			break;
 
+	    case 51:
+		  	if(vmpi::my_rank==0){
+		       std::cout << "Setting..." << std::endl;
+		       zlog << "Setting..." << std::endl;
+	     	}
+		  	program::setting_process();
+		    break;
+
 		default:{
 			std::cerr << "Unknown Internal Program ID "<< sim::program << " requested, exiting" << std::endl;
 			zlog << "Unknown Internal Program ID "<< sim::program << " requested, exiting" << std::endl;
 			exit (EXIT_FAILURE);
 			}
 	}
+	if (micromagnetic::discretisation_micromagnetic){
+	      std::ofstream pfile("cell_config2");
+			for (int cell = 0; cell < cells::num_cells; cell++)
+			{
+				pfile << cells::x_coord_array[cell] << '\t' << cells::y_coord_array[cell] << '\t' << cells::z_coord_array[cell] << '\t' <<cells::x_mag_array[cell] << '\t' << cells::y_mag_array[cell] << '\t' << cells::z_mag_array[cell] << '\t' << std::endl;
+			}
+   	if (micromagnetic::enable_boltzman_distribution == true){
+			std::ofstream pfile2D("LLBprob");
+			for(int para=0;para<101;para++){
+				for(int perp=0;perp<101;perp++){
+					pfile2D << double(para)/100.0 << "\t" << double(perp)/100.0 << "\t" << micromagnetic::P[para][perp] << std::endl;
+				}
+			}
+			std::ofstream pfile1D("LLBprob1D");
 
+			for(int para=0;para<1001;para++){
+				//std::cout << "F: " << F << " PF: " << PF << std::endl;
+				pfile1D << (double(para))/1000.0 << "\t" << micromagnetic::P1D[para] << std::endl;
+			}
+		}
+	}
    //------------------------------------------------
    // Output Monte Carlo statistics if applicable
    //------------------------------------------------
@@ -521,7 +550,6 @@ int integrate(int n_steps){
 ///=====================================================================================
 ///
 void integrate_serial(int n_steps){
-
    // Check for calling of function
    if(err::check==true) std::cout << "sim::integrate_serial has been called" << std::endl;
 
@@ -532,6 +560,8 @@ void integrate_serial(int n_steps){
          for(int ti=0;ti<n_steps;ti++){
             // Optionally select GPU accelerated version
             if(gpu::acceleration) gpu::llg_heun();
+				else if (micromagnetic::discretisation_micromagnetic) micromagnetic::LLB(n_steps,cells::num_cells, sim::temperature, cells::x_mag_array, cells::y_mag_array, cells::z_mag_array, sim::H_vec[0],sim::H_vec[1],sim::H_vec[2], sim::H_applied, mp::dt, cells::volume_array, N);
+
             // Otherwise use CPU version
             else sim::LLG_Heun();
             // Increment time

@@ -6,18 +6,18 @@
 //
 //  Email:richard.evans@york.ac.uk
 //
-//  This program is free software; you can redistribute it and/or modify 
-//  it under the terms of the GNU General Public License as published by 
-//  the Free Software Foundation; either version 2 of the License, or 
+//  This program is free software; you can redistribute it and/or modify
+//  it under the terms of the GNU General Public License as published by
+//  the Free Software Foundation; either version 2 of the License, or
 //  (at your option) any later version.
 //
-//  This program is distributed in the hope that it will be useful, but 
-//  WITHOUT ANY WARRANTY; without even the implied warranty of 
-//  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU 
+//  This program is distributed in the hope that it will be useful, but
+//  WITHOUT ANY WARRANTY; without even the implied warranty of
+//  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
 //  General Public License for more details.
 //
-//  You should have received a copy of the GNU General Public License 
-//  along with this program; if not, write to the Free Software Foundation, 
+//  You should have received a copy of the GNU General Public License
+//  along with this program; if not, write to the Free Software Foundation,
 //  Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA.
 //
 // ----------------------------------------------------------------------------
@@ -73,7 +73,10 @@
 #include "sim.hpp"
 #include "vio.hpp"
 #include "vmpi.hpp"
+#include "micromagnetic.hpp"
 
+#include <complex>
+#include "array3d.h"
 
 #include <cmath>
 #include <iostream>
@@ -82,7 +85,8 @@
 namespace demag{
 
 	bool fast=false;
-	
+	bool fft=false;
+
 	int update_rate=100; /// timesteps between updates
 	int update_time=-1; /// last update time
 
@@ -95,7 +99,23 @@ namespace demag{
 	std::vector <std::vector < double > > rij_yy;
 	std::vector <std::vector < double > > rij_yz;
 	std::vector <std::vector < double > > rij_zz;
-	
+
+	Array3D<fftw_complex> Nxx; // creates the stencil complex array Nxx
+	Array3D<fftw_complex> Nyx; // creates the stencil complex array Nyx
+	Array3D<fftw_complex> Nzx; // creates the stencil complex array Nzx
+
+	Array3D<fftw_complex> Nxy; // creates the stencil complex array Nxy
+	Array3D<fftw_complex> Nyy; // creates the stencil complex array Nyy
+	Array3D<fftw_complex> Nzy; // creates the stencil complex array Nzy
+
+	Array3D<fftw_complex> Nxz; // creates the stencil complex array Nxz
+	Array3D<fftw_complex> Nyz; // creates the stencil complex array Nyz
+	Array3D<fftw_complex> Nzz; // creates the stencil complex array Nzz
+
+	int num_macro_cells_x;
+	int num_macro_cells_y;
+	int num_macro_cells_z;
+
 /// @brief Function to set r_ij matrix values
 ///
 /// @section License
@@ -108,7 +128,7 @@ namespace demag{
 /// @date    28/03/2011
 ///
 /// @return EXIT_SUCCESS
-/// 
+///
 /// @internal
 ///	Created:		28/03/2011
 ///	Revision:	  ---
@@ -124,7 +144,7 @@ void init(){
 		terminaltextcolor(WHITE);
 	}
 	if(demag::fast==true) {
-		
+
       // timing function
       #ifdef MPICF
          double t1 = MPI_Wtime();
@@ -135,10 +155,10 @@ void init(){
 		// Check memory requirements and print to screen
 		zlog << zTs() << "Fast demagnetisation field calculation has been enabled and requires " << double(cells::num_cells)*double(cells::num_local_cells*6)*8.0/1.0e6 << " MB of RAM" << std::endl;
 		std::cout << "Fast demagnetisation field calculation has been enabled and requires " << double(cells::num_cells)*double(cells::num_local_cells*6)*8.0/1.0e6 << " MB of RAM" << std::endl;
-		
+
 		// allocate arrays to store data [nloccell x ncells]
 		for(int lc=0;lc<cells::num_local_cells; lc++){
-			
+
 			demag::rij_xx.push_back(std::vector<double>());
 			demag::rij_xx[lc].resize(cells::num_cells,0.0);
 
@@ -161,23 +181,23 @@ void init(){
 
 		// calculate matrix prefactors
 		zlog << zTs() << "Precalculating rij matrix for demag calculation... " << std::endl;
-		
+
 		// loop over local cells
 		for(int lc=0;lc<cells::num_local_cells;lc++){
-			
+
 			// reference global cell ID
 			int i = cells::local_cell_array[lc];
-			
-			// Loop over all other cells to calculate contribution to local cell 
+
+			// Loop over all other cells to calculate contribution to local cell
 			for(int j=0;j<cells::num_cells;j++){
 				if(i!=j){
-				
+
 					const double rx = cells::x_coord_array[j]-cells::x_coord_array[i]; // Angstroms
 					const double ry = cells::y_coord_array[j]-cells::y_coord_array[i];
 					const double rz = cells::z_coord_array[j]-cells::z_coord_array[i];
 
 					const double rij = 1.0/sqrt(rx*rx+ry*ry+rz*rz);
-					
+
 					const double ex = rx*rij;
 					const double ey = ry*rij;
 					const double ez = rz*rij;
@@ -191,11 +211,10 @@ void init(){
 					rij_yy[lc][j] = demag::prefactor*((3.0*ey*ey - 1.0)*rij3);
 					rij_yz[lc][j] = demag::prefactor*(3.0*ey*ez)*rij3;
 					rij_zz[lc][j] = demag::prefactor*((3.0*ez*ez - 1.0)*rij3);
-
 				}
 			}
 		}
-		
+
       #ifdef MPICF
          double t2 = MPI_Wtime();
       #else
@@ -203,9 +222,83 @@ void init(){
          t2 = time (NULL);
       #endif
 		zlog << zTs() << "Precalculation of rij matrix for demag calculation complete. Time taken: " << t2-t1 << "s."<< std::endl;
-		
+
 	}
-	
+	if(demag::fft==true) {
+
+		Array3D<fftw_complex> Nxx; //3D Array for dipolar field
+		Array3D<fftw_complex> Nxy;
+		Array3D<fftw_complex> Nxz;
+
+		Array3D<fftw_complex> Nyx; //3D Array for dipolar field
+		Array3D<fftw_complex> Nyy;
+		Array3D<fftw_complex> Nyz;
+
+		Array3D<fftw_complex> Nzx; //3D Array for dipolar field
+		Array3D<fftw_complex> Nzy;
+		Array3D<fftw_complex> Nzz;
+
+
+	   num_macro_cells_x = int(cs::system_dimensions[0])/int(cells::size);
+	   num_macro_cells_y = int(cs::system_dimensions[1])/int(cells::size);
+	   num_macro_cells_z = int(cs::system_dimensions[2])/int(cells::size);
+
+		Nxx.resize(2*num_macro_cells_x,2*num_macro_cells_y,2*num_macro_cells_z);
+	   Nxy.resize(2*num_macro_cells_x,2*num_macro_cells_y,2*num_macro_cells_z);
+	   Nxz.resize(2*num_macro_cells_x,2*num_macro_cells_y,2*num_macro_cells_z);
+
+		Nyx.resize(2*num_macro_cells_x,2*num_macro_cells_y,2*num_macro_cells_z);
+	   Nyy.resize(2*num_macro_cells_x,2*num_macro_cells_y,2*num_macro_cells_z);
+	   Nyz.resize(2*num_macro_cells_x,2*num_macro_cells_y,2*num_macro_cells_z);
+
+		Nzx.resize(2*num_macro_cells_x,2*num_macro_cells_y,2*num_macro_cells_z);
+		Nzy.resize(2*num_macro_cells_x,2*num_macro_cells_y,2*num_macro_cells_z);
+		Nzz.resize(2*num_macro_cells_x,2*num_macro_cells_y,2*num_macro_cells_z);
+
+
+
+	double ii,jj,kk;
+	   for(int i=0;i<num_macro_cells_x*2;i++){
+	      if (i >= num_macro_cells_x) ii = i - 2*num_macro_cells_x;
+	      else ii = i;
+	      for(int j=0;j<num_macro_cells_y*2;j++){
+	         if (j >= num_macro_cells_y) jj = j - 2*num_macro_cells_y;
+	         else jj = j;
+	         for(int k=0;k<num_macro_cells_z*2;k++){
+	            if (k>= num_macro_cells_z) kk = k - 2*num_macro_cells_z;
+	            else kk = k;
+	            if((ii!=jj) && (jj != kk)){
+
+	               const double rx = ii*cells::size; // Angstroms
+	               const double ry = jj*cells::size;
+	               const double rz = kk*cells::size;
+
+	               const double rij = 1.0/pow(rx*rx+ry*ry+rz*rz,0.5);
+
+	               const double ex = rx*rij;
+	               const double ey = ry*rij;
+	               const double ez = rz*rij;
+
+	               const double rij3 = rij*rij*rij; // Angstroms
+
+
+	               Nxx(i,j,k)[0] = prefactor*(3.0*ex*ex - 1.0)*rij3;
+	               Nxy(i,j,k)[0] = prefactor*(3.0*ex*ey      )*rij3;
+	               Nxz(i,j,k)[0] = prefactor*(3.0*ex*ez      )*rij3;
+
+						Nyx(i,j,k)[0] = prefactor*(3.0*ex*ex - 1.0)*rij3;
+	               Nyy(i,j,k)[0] = prefactor*(3.0*ex*ey      )*rij3;
+	               Nyz(i,j,k)[0] = prefactor*(3.0*ex*ez      )*rij3;
+
+						Nzx(i,j,k)[0] = prefactor*(3.0*ex*ex - 1.0)*rij3;
+						Nzy(i,j,k)[0] = prefactor*(3.0*ex*ey      )*rij3;
+						Nzz(i,j,k)[0] = prefactor*(3.0*ex*ez      )*rij3;
+	            }
+	         }
+	      }
+	   }
+	}
+
 	// timing function
    #ifdef MPICF
       double t1 = MPI_Wtime();
@@ -226,9 +319,9 @@ void init(){
    #endif
 
    zlog << zTs() << "Time required for demag update: " << t2-t1 << "s." << std::endl;
-	
+
 }
-	
+
 /// @brief Function to recalculate demag fields using fast update method
 ///
 /// @section License
@@ -241,14 +334,14 @@ void init(){
 /// @date    28/03/2011
 ///
 /// @return EXIT_SUCCESS
-/// 
+///
 /// @internal
 ///	Created:		28/03/2011
 ///	Revision:	  ---
 ///=====================================================================================
 ///
 inline void fast_update(){
-	
+
 	// check for callin of routine
 	if(err::check==true) {
 		terminaltextcolor(RED);
@@ -257,21 +350,21 @@ inline void fast_update(){
 	}
 	// loop over local cells
 	for(int lc=0;lc<cells::num_local_cells;lc++){
-		
+
 		int i = cells::local_cell_array[lc];
-		
+	//	std::cout << cells::x_mag_array[i] << '\t' << cells::y_mag_array[i] << '\t' << cells::z_mag_array[i] << '\t' << std::endl;
       // Calculate inverse volume from number of atoms in macrocell
       // V in A^3 == 1e-30 m3, mu_0 = 4pie-7 -> prefactor = pi*4e23/3V
-      const double mu0_three_cell_volume = -4.0e23*M_PI/(3.0*cells::volume_array[i]);
+      const double mu0_three_cell_volume = 8.0e23*M_PI/(3.0*cells::volume_array[i]);
 
       // Add self-demagnetisation
 		cells::x_field_array[i]=mu0_three_cell_volume*cells::x_mag_array[i];
 		cells::y_field_array[i]=mu0_three_cell_volume*cells::y_mag_array[i];
 		cells::z_field_array[i]=mu0_three_cell_volume*cells::z_mag_array[i];
 
-		// Loop over all other cells to calculate contribution to local cell 
+		// Loop over all other cells to calculate contribution to local cell
 		for(int j=0;j<cells::num_cells;j++){
-			
+
 			const double mx = cells::x_mag_array[j];
 			const double my = cells::y_mag_array[j];
 			const double mz = cells::z_mag_array[j];
@@ -279,9 +372,9 @@ inline void fast_update(){
 			cells::x_field_array[i]+=(mx*rij_xx[lc][j] + my*rij_xy[lc][j] + mz*rij_xz[lc][j]);
 			cells::y_field_array[i]+=(mx*rij_xy[lc][j] + my*rij_yy[lc][j] + mz*rij_yz[lc][j]);
 			cells::z_field_array[i]+=(mx*rij_xz[lc][j] + my*rij_yz[lc][j] + mz*rij_zz[lc][j]);
-				
+
 		}
-		
+
 		// Output data to vdp file
 		//vdp << i << "\t" << cells::num_atoms_in_cell[i] << "\t";
 		//vdp << cells::x_coord_array[i] << "\t" << cells::y_coord_array[i] << "\t" << cells::z_coord_array[i] << "\t";
@@ -304,14 +397,14 @@ inline void fast_update(){
 /// @date    28/03/2011
 ///
 /// @return EXIT_SUCCESS
-/// 
+///
 /// @internal
 ///	Created:		28/03/2011
 ///	Revision:	  ---
 ///=====================================================================================
 ///
 inline void std_update(){
-	
+
 	// check for callin of routine
 	if(err::check==true){
 		terminaltextcolor(RED);
@@ -320,7 +413,7 @@ inline void std_update(){
 	}
 	// loop over local cells
 	for(int lc=0;lc<cells::num_local_cells;lc++){
-		
+
 		// get global cell ID
 		int i = cells::local_cell_array[lc];
 
@@ -333,10 +426,10 @@ inline void std_update(){
 		cells::x_field_array[i]=mu0_three_cell_volume*cells::x_mag_array[i];
 		cells::y_field_array[i]=mu0_three_cell_volume*cells::y_mag_array[i];
 		cells::z_field_array[i]=mu0_three_cell_volume*cells::z_mag_array[i];
-		
-		// Loop over all other cells to calculate contribution to local cell 
+
+		// Loop over all other cells to calculate contribution to local cell
 		for(int j=0;j<i;j++){
-				
+
 			const double mx = cells::x_mag_array[j];
 			const double my = cells::y_mag_array[j];
 			const double mz = cells::z_mag_array[j];
@@ -388,15 +481,163 @@ inline void std_update(){
 		cells::x_field_array[i]*=demag::prefactor;
 		cells::y_field_array[i]*=demag::prefactor;
 		cells::z_field_array[i]*=demag::prefactor;
-		
+
 		// Output data to vdp file
 		//vdp << i << "\t" << cells::num_atoms_in_cell[i] << "\t";
 		//vdp << cells::x_coord_array[i] << "\t" << cells::y_coord_array[i] << "\t" << cells::z_coord_array[i] << "\t";
 		//vdp << cells::x_field_array[i] << "\t" << cells::y_field_array[i] << "\t" << cells::z_field_array[i] << "\t";
 		//vdp << cells::x_mag_array[i] << "\t" << cells::y_mag_array[i] << "\t"<< cells::z_mag_array[i] << "\t" << inv_three_cell_volume*demag::prefactor*cells::z_mag_array[i] << std::endl;
-		
+
 	}
 	//err::vexit();
+}
+
+
+void fft_update()
+{
+
+	// check for callin of routine
+	if(err::check==true){
+		terminaltextcolor(RED);
+		std::cerr << "demag::fft_update has been called " << vmpi::my_rank << std::endl;
+		terminaltextcolor(WHITE);
+	}
+
+   Array3D<fftw_complex> Mx; //3D Array for magneetisation
+   Array3D<fftw_complex> My;
+   Array3D<fftw_complex> Mz;
+
+   Array3D<fftw_complex> Hx; //3D Array for dipolar field
+   Array3D<fftw_complex> Hy;
+   Array3D<fftw_complex> Hz;
+
+   Hx.resize(2*num_macro_cells_x,2*num_macro_cells_y,2*num_macro_cells_z);
+   Hy.resize(2*num_macro_cells_x,2*num_macro_cells_y,2*num_macro_cells_z);
+   Hz.resize(2*num_macro_cells_x,2*num_macro_cells_y,2*num_macro_cells_z);
+
+   Mx.resize(2*num_macro_cells_x,2*num_macro_cells_y,2*num_macro_cells_z);
+   My.resize(2*num_macro_cells_x,2*num_macro_cells_y,2*num_macro_cells_z);
+   Mz.resize(2*num_macro_cells_x,2*num_macro_cells_y,2*num_macro_cells_z);
+
+
+      Mx.IFillComplex(0.0);
+      My.IFillComplex(0.0);
+      Mz.IFillComplex(0.0);
+		int cell = 0;
+		int ii,jj,kk;
+		for (int i=0 ; i<2*num_macro_cells_x; i++){
+			if (i == num_macro_cells_x) cell =0;
+			for (int j=0 ; j<2*num_macro_cells_y; j++){
+				for (int k=0 ; k<2*num_macro_cells_z; k++){
+
+					Mx(i,j,k)[0] = cells::x_mag_array[cell];
+					My(i,j,k)[0] = cells::y_mag_array[cell];
+					Mz(i,j,k)[0] = cells::z_mag_array[cell];
+					cell ++;
+
+				}
+			 }
+		}
+
+      Hx.IFill(0.0);
+      Hy.IFill(0.0);
+      Hz.IFill(0.0);
+      // fft calculations
+      fftw_plan NxxP,NxyP,NxzP,NyxP,NyyP,NyzP,NzxP,NzyP,NzzP;
+      fftw_plan MxP,MyP,MzP;
+
+      //deterines the forward transform for the N arrays
+      NxxP = fftw_plan_dft_3d(2*num_macro_cells_x,2*num_macro_cells_y,2*num_macro_cells_z,Nxx.ptr(),Nxx.ptr(),FFTW_FORWARD,FFTW_ESTIMATE);
+		std::cout << 'd' <<std::endl;
+	   fftw_execute(NxxP);
+		std::cout << 'd' <<std::endl;
+      NyxP = fftw_plan_dft_3d(2*num_macro_cells_x,2*num_macro_cells_y,2*num_macro_cells_z,Nyx.ptr(),Nyx.ptr(),FFTW_FORWARD,FFTW_ESTIMATE);
+      fftw_execute(NyxP);
+      NzxP = fftw_plan_dft_3d(2*num_macro_cells_x,2*num_macro_cells_y,2*num_macro_cells_z,Nzx.ptr(),Nzx.ptr(),FFTW_FORWARD,FFTW_ESTIMATE);
+      fftw_execute(NzxP);
+		std::cout << 'r' <<std::endl;
+      NxyP = fftw_plan_dft_3d(2*num_macro_cells_x,2*num_macro_cells_y,2*num_macro_cells_z,Nxy.ptr(),Nxy.ptr(),FFTW_FORWARD,FFTW_ESTIMATE);
+      fftw_execute(NxyP);
+      NyyP = fftw_plan_dft_3d(2*num_macro_cells_x,2*num_macro_cells_y,2*num_macro_cells_z,Nyy.ptr(),Nyy.ptr(),FFTW_FORWARD,FFTW_ESTIMATE);
+      fftw_execute(NyyP);
+      NzyP = fftw_plan_dft_3d(2*num_macro_cells_x,2*num_macro_cells_y,2*num_macro_cells_z,Nzy.ptr(),Nzy.ptr(),FFTW_FORWARD,FFTW_ESTIMATE);
+      fftw_execute(NzyP);
+		std::cout << 'f' <<std::endl;
+      NxzP = fftw_plan_dft_3d(2*num_macro_cells_x,2*num_macro_cells_y,2*num_macro_cells_z,Nxz.ptr(),Nxz.ptr(),FFTW_FORWARD,FFTW_ESTIMATE);
+      fftw_execute(NxzP);
+      NyzP = fftw_plan_dft_3d(2*num_macro_cells_x,2*num_macro_cells_y,2*num_macro_cells_z,Nyz.ptr(),Nyz.ptr(),FFTW_FORWARD,FFTW_ESTIMATE);
+      fftw_execute(NyzP);
+      NzzP = fftw_plan_dft_3d(2*num_macro_cells_x,2*num_macro_cells_y,2*num_macro_cells_z,Nzz.ptr(),Nzz.ptr(),FFTW_FORWARD,FFTW_ESTIMATE);
+      fftw_execute(NzzP);
+		std::cout << 'g' <<std::endl;
+      MxP = fftw_plan_dft_3d(2*num_macro_cells_x,2*num_macro_cells_y,2*num_macro_cells_z,Mx.ptr(),Mx.ptr(),FFTW_FORWARD,FFTW_ESTIMATE);
+      fftw_execute(MxP);
+      MyP = fftw_plan_dft_3d(2*num_macro_cells_x,2*num_macro_cells_y,2*num_macro_cells_z,My.ptr(),My.ptr(),FFTW_FORWARD,FFTW_ESTIMATE);
+      fftw_execute(MyP);
+      MzP = fftw_plan_dft_3d(2*num_macro_cells_x,2*num_macro_cells_y,2*num_macro_cells_z,Mz.ptr(),Mz.ptr(),FFTW_FORWARD,FFTW_ESTIMATE);
+      fftw_execute(MzP);
+		std::cout << 'h' <<std::endl;
+
+
+
+      // performs the converlusion between Nk and Mk
+   for (int i=0 ; i<2*num_macro_cells_x ; i++){
+      for (int j=0 ; j<2*num_macro_cells_y ; j++){
+          for (int k=0 ; k<2*num_macro_cells_z ; k++){
+           // [Nreal+ iNimag]*(Mreal+iMimag)
+           Hx(i,j,k)[0] = Nxx(i,j,k)[0]*Mx(i,j,k)[0] + Nxy(i,j,k)[0]*My(i,j,k)[0] + Nxz(i,j,k)[0]*Mz(i,j,k)[0]; //summing the real part
+           Hx(i,j,k)[0] -= (Nxx(i,j,k)[1]*Mx(i,j,k)[1] + Nxy(i,j,k)[1]*My(i,j,k)[1] + Nxz(i,j,k)[1]*Mz(i,j,k)[1]);
+           Hx(i,j,k)[1] = Nxx(i,j,k)[0]*Mx(i,j,k)[1] + Nxy(i,j,k)[0]*My(i,j,k)[1] + Nxz(i,j,k)[0]*Mz(i,j,k)[1];
+           Hx(i,j,k)[1] += (Nxx(i,j,k)[1]*Mx(i,j,k)[0] + Nxy(i,j,k)[1]*My(i,j,k)[0] + Nxz(i,j,k)[1]*Mz(i,j,k)[0]);
+
+           Hy(i,j,k)[0] = Nyx(i,j,k)[0]*Mx(i,j,k)[0] + Nyy(i,j,k)[0]*My(i,j,k)[0] + Nyz(i,j,k)[0]*Mz(i,j,k)[0];
+           Hy(i,j,k)[0] -= (Nyx(i,j,k)[1]*Mx(i,j,k)[1] + Nyy(i,j,k)[1]*My(i,j,k)[1] + Nyz(i,j,k)[1]*Mz(i,j,k)[1]);
+           Hy(i,j,k)[1] = Nyx(i,j,k)[0]*Mx(i,j,k)[1] + Nyy(i,j,k)[0]*My(i,j,k)[1] + Nyz(i,j,k)[0]*Mz(i,j,k)[1];
+           Hy(i,j,k)[1] += (Nyx(i,j,k)[1]*Mx(i,j,k)[0] + Nyy(i,j,k)[1]*My(i,j,k)[0] + Nyz(i,j,k)[1]*Mz(i,j,k)[0]);
+
+           Hz(i,j,k)[0] = Nzx(i,j,k)[0]*Mx(i,j,k)[0] + Nzy(i,j,k)[0]*My(i,j,k)[0] + Nzz(i,j,k)[0]*Mz(i,j,k)[0]; //summing the real part
+           Hz(i,j,k)[0] -= (Nzx(i,j,k)[1]*Mx(i,j,k)[1] + Nzy(i,j,k)[1]*My(i,j,k)[1] + Nzz(i,j,k)[1]*Mz(i,j,k)[1]);
+           Hz(i,j,k)[1] = Nzx(i,j,k)[0]*Mx(i,j,k)[1] + Nzy(i,j,k)[0]*My(i,j,k)[1] + Nzz(i,j,k)[0]*Mz(i,j,k)[1];
+           Hz(i,j,k)[1] += (Nzx(i,j,k)[1]*Mx(i,j,k)[0] + Nzy(i,j,k)[1]*My(i,j,k)[0] + Nzz(i,j,k)[1]*Mz(i,j,k)[0]);
+          }
+      }
+   }
+
+   // performs the backward transform to give the dipole field, Hx, Hy, Hz
+   fftw_plan HxP,HyP,HzP;
+
+   HxP = fftw_plan_dft_3d(2*num_macro_cells_x,2*num_macro_cells_y,2*num_macro_cells_z,Hx.ptr(),Hx.ptr(),FFTW_BACKWARD,FFTW_ESTIMATE);
+   fftw_execute(HxP);
+   HyP = fftw_plan_dft_3d(2*num_macro_cells_x,2*num_macro_cells_y,2*num_macro_cells_z,Hy.ptr(),Hy.ptr(),FFTW_BACKWARD,FFTW_ESTIMATE);
+   fftw_execute(HyP);
+   HzP = fftw_plan_dft_3d(2*num_macro_cells_x,2*num_macro_cells_y,2*num_macro_cells_z,Hz.ptr(),Hz.ptr(),FFTW_BACKWARD,FFTW_ESTIMATE);
+   fftw_execute(HzP);
+
+double pi = 3.14;
+
+   for (int i=0 ; i<2*num_macro_cells_x ; i++){
+  		for (int j=0 ; j<2*num_macro_cells_y ; j++){
+      	for (int k=0 ; k<2*num_macro_cells_z ; k++){
+          	if(i==j && i==k){
+           		Hx(i,j,k)[0] += Mx(i,j,k)[0]*8.0*pi/3.0;
+           		Hy(i,j,k)[0] += My(i,j,k)[0]*8.0*pi/3.0;
+           		Hz(i,j,k)[0] += Mz(i,j,k)[0]*8.0*pi/3.0;
+           	}
+      	}
+   	}
+	}
+	cell = 0;
+	for (int i=0 ; i<num_macro_cells_x ; i++){
+		for (int j=0 ; j<num_macro_cells_y ; j++){
+			for (int k=0 ; k<num_macro_cells_z ; k++){
+				cells::x_field_array[cell] = 1.0e-7*Hx(i,j,k)[0]/((2.0*num_macro_cells_x)*(2.0*num_macro_cells_y)*(2.0*num_macro_cells_z));
+				cells::y_field_array[cell] = 1.0e-7*Hy(i,j,k)[0]/((2.0*num_macro_cells_x)*(2.0*num_macro_cells_y)*(2.0*num_macro_cells_z));
+				cells::z_field_array[cell] = 1.0e-7*Hz(i,j,k)[0]/((2.0*num_macro_cells_x)*(2.0*num_macro_cells_y)*(2.0*num_macro_cells_z));
+				std::cout << cells::x_field_array[cell] << '\t' << cells::y_field_array[cell] << '\t' << cells::z_field_array[cell] <<std::endl;
+				cell++;
+			}
+		}
+	}
 }
 
 /// @brief Wrapper Function to update demag fields
@@ -411,7 +652,7 @@ inline void std_update(){
 /// @date    28/03/2011
 ///
 /// @return EXIT_SUCCESS
-/// 
+///
 /// @internal
 ///	Created:		28/03/2011
 ///	Revision:	  ---
@@ -434,19 +675,20 @@ void update(){
 		demag::update_time=sim::time;
 
 		// update cell magnetisations
-		cells::mag();
-		
+		if (micromagnetic::discretisation_micromagnetic == false) cells::mag();
+
 		// recalculate demag fields
 		if(demag::fast==true) fast_update();
+		else if(demag::fft==true) fft_update();
 		else std_update();
-		
+
 		// For MPI version, only add local atoms
 		#ifdef MPICF
 			const int num_local_atoms = vmpi::num_core_atoms+vmpi::num_bdry_atoms;
 		#else
 			const int num_local_atoms = atoms::num_atoms;
 		#endif
-			
+
 		// Update Atomistic Dipolar Field Array
 		for(int atom=0;atom<num_local_atoms;atom++){
 			const int cell = atoms::cell_array[atom];
@@ -459,8 +701,10 @@ void update(){
 
 		} // End of check for update rate
 	} // end of check for update time
-	
+
 }
 
-} // end of namespace demag
 
+
+
+} // end of namespace demag

@@ -23,7 +23,7 @@
 
 namespace micromagnetic{
 
-   //---------------------------------------------------------------------------
+   //------------------------------------ ---------------------------------------
    // Function to process input file parameters for micromagnetic module
    //---------------------------------------------------------------------------
    bool match_input_parameter(std::string const key, std::string const word, std::string const value, std::string const unit, int const line){
@@ -48,6 +48,45 @@ namespace micromagnetic{
       std::string prefix="material:";
 
       //--------------------------------------------------------------------
+      std::string test="discretisation"; // whether the material is micromagnetic or atomistic
+      if(word==test){
+
+         // check for type of discretisation
+         test="micromagnetic";
+         if(value==test){
+            discretisation_micromagnetic = true;
+            // call micromagnetic function?? somehow? create a bool - micromagnetic ==true? but where is the bool stpred?
+            return true;
+         }
+         test="atomistic"; // runs simualtion as normal - do i need to type anything to make it so that?
+         if(value==test){
+            discretisation_micromagnetic= false;
+            return true;
+         }
+         test="multiscale"; // at the moment just runs a normal atomsitic simulation
+         if(value==test){
+            discretisation_micromagnetic = false;
+            std::cerr << "Error - multiscale not yet implemented" << std::endl;
+            zlog << zTs() << "Error - multiscale not yet implemented" << std::endl;
+            return true;
+         }
+         // otherwise throw an error
+         terminaltextcolor(RED);
+         std::cerr << "Error - value for \'material[" << super_index << "]:" << word << "\' must be one of:" << std::endl;
+         std::cerr << "\t\"micromagnetic\"" << std::endl;
+         std::cerr << "\t\"atomistic\"" << std::endl;
+         std::cerr << "\t\"multiscale\"" << std::endl;
+         terminaltextcolor(WHITE);
+         zlog << zTs() << "Error - value for \'material[" << super_index << "]:" << word << "\' must be one of:" << std::endl;
+         zlog << zTs() << "\t\"micromagnetic\"" << std::endl;
+         zlog << zTs() <<"\t\"atomistic\"" << std::endl;
+         zlog << zTs() << "\t\"multiscale\"" << std::endl;
+         err::vexit();
+
+         return true;
+      }
+
+      //--------------------------------------------------------------------
       // Keyword not found
       //--------------------------------------------------------------------
       return false;
@@ -55,4 +94,3 @@ namespace micromagnetic{
    }
 
 } // end of micromagnetic namespace
-

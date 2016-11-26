@@ -63,6 +63,7 @@
 #include "units.hpp"
 #include "vio.hpp"
 #include "vmpi.hpp"
+#include "micromagnetic.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -287,7 +288,7 @@ namespace vin{
 // Function Prototypes
 //int read(string const);
 int match(string const, string const, string const, string const, int const);
-  int read_mat_file(std::string const, int const);
+int read_mat_file(std::string const, int const);
 int match_create(std::string const, std::string const, std::string const, int const);
 int match_dimension(std::string const, std::string const, std::string const, int const);
 int match_sim(std::string const, std::string const, std::string const, int const);
@@ -1527,6 +1528,11 @@ int match_sim(string const word, string const value, string const unit, int cons
          sim::program=50;
          return EXIT_SUCCESS;
       }
+      test="setting";
+      if(value==test){
+	sim::program=51;
+	return EXIT_SUCCESS;
+      }
       else{
 		 terminaltextcolor(RED);
          std::cerr << "Error - value for \'sim:" << word << "\' must be one of:" << std::endl;
@@ -1544,6 +1550,12 @@ int match_sim(string const word, string const value, string const unit, int cons
          terminaltextcolor(WHITE);
 		 err::vexit();
       }
+   }
+   //-------------------------------------------------------------------
+   test="enable-micromagnetic-boltzman-distribution";
+   if(word==test){
+      micromagnetic::enable_boltzman_distribution=true;
+      return EXIT_SUCCESS;
    }
    //-------------------------------------------------------------------
    test="enable-dipole-fields";
@@ -1564,6 +1576,12 @@ int match_sim(string const word, string const value, string const unit, int cons
       return EXIT_SUCCESS;
    }
    //-------------------------------------------------------------------
+   test="enable-fft-dipole-fields";
+   if(word==test){
+      demag::fft=true;
+      return EXIT_SUCCESS;
+   }
+   //-------------------------------------------------------------------
    test="dipole-field-update-rate";
    if(word==test){
       int dpur=atoi(value.c_str());
@@ -1571,6 +1589,7 @@ int match_sim(string const word, string const value, string const unit, int cons
       demag::update_rate=dpur;
       return EXIT_SUCCESS;
    }
+
    //-------------------------------------------------------------------
    test="enable-surface-anisotropy";
    if(word==test){
@@ -1995,6 +2014,15 @@ int match_sim(string const word, string const value, string const unit, int cons
       mtrandom::integration_seed=is;
       return EXIT_SUCCESS;
    }
+
+   //--------------------------------------------------------------------
+   test="llb-stochastic-fields-off";
+   if(word==test){
+      std::cout << "" <<std::endl;
+      micromagnetic::stochastic=false;
+      return EXIT_SUCCESS;
+   }
+
    //--------------------------------------------------------------------
    test="constraint-rotation-update";
    if(word==test){
@@ -3874,7 +3902,7 @@ int read_mat_file(std::string const matfile, int const LineNumber){
       //-------------------------------------------------------------------
       else if(sim::match_material_parameter(word, value, unit, line, super_index)) return EXIT_SUCCESS;
       else if(create::match_material_parameter(word, value, unit, line, super_index, sub_index)) return EXIT_SUCCESS;
-
+      else if(micromagnetic::match_material_parameter(word, value, unit, line, super_index, sub_index)) return EXIT_SUCCESS;
 		//--------------------------------------------------------------------
 		// keyword not found
 		//--------------------------------------------------------------------
