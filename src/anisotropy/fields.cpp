@@ -56,12 +56,75 @@ namespace anisotropy{
                const int end_index,
                const double temperature){
 
-      // Loop over all atoms between start and end index
+      // Lop over all atoms between start and end index
       for(int atom = start_index; atom<end_index; atom++){
 
          const double sx = spin_array_x[atom]; // store spin direction in temporary variables
          const double sy = spin_array_y[atom];
          const double sz = spin_array_z[atom];
+
+
+           // get atom material(Roberto)
+            const unsigned int mat = type_array[atom];
+
+            // Vectors defining the easy axis in cubic anisotropy(Roberto)          
+            double e1[3] = { internal::mp[mat].kc_vector1[0],
+                                   internal::mp[mat].kc_vector1[1],
+                                   internal::mp[mat].kc_vector1[2] };
+
+            double e2[3] = { internal::mp[mat].kc_vector2[0],
+                                   internal::mp[mat].kc_vector2[1],
+                                   internal::mp[mat].kc_vector2[2] };
+
+            double e3[3] = { (internal::mp[mat].kc_vector1[1]*internal::mp[mat].kc_vector2[2] - internal::mp[mat].kc_vector1[2]*internal::mp[mat].kc_vector2[1]),
+                                   (internal::mp[mat].kc_vector1[2]*internal::mp[mat].kc_vector2[0] - internal::mp[mat].kc_vector1[0]*internal::mp[mat].kc_vector2[2]),
+                                   (internal::mp[mat].kc_vector1[0]*internal::mp[mat].kc_vector2[1] - internal::mp[mat].kc_vector1[1]*internal::mp[mat].kc_vector2[0]) };
+
+             double mod_e1;           // Normalization (Roberto)
+             double mod_e2;           
+             double mod_e3; 
+
+
+
+             // Strore constant including prefactor and conversion to Tesla (-dE/dS)  (Roberto)
+            const double kc4 = 0.5 * internal::mp[mat].kc4;
+            double lambda;
+             
+//           if ( kc4 >=  0.0) {           // (Roberto)
+//                 lambda = 1.0;
+//           }
+//            else if ( kc4 < 0.0){       //  (Roberto)
+//                 lambda = 1.0/3.0;
+//            } 
+ 
+           if ( kc4 >=  0.0) {           // (Roberto)
+                 lambda = 0.0;
+           }    
+            else if ( kc4 < 0.0){       //  (Roberto)
+                 lambda = 0.0/3.0;
+            }
+
+
+
+                // Normalise Spin Length (Roberto). Anisotropy directions are good enough being orthogonal
+                mod_e1 = 1.0/sqrt(e1[0]*e1[0] + e1[1]*e1[1] + e1[2]*e1[2]);
+                mod_e2 = 1.0/sqrt(e2[0]*e2[0] + e2[1]*e2[1] + e2[2]*e2[2]);
+                mod_e3 = 1.0/sqrt(e3[0]*e3[0] + e3[1]*e3[1] + e3[2]*e3[2]);
+
+
+                e1[0]=e1[0]*mod_e1;
+                e1[1]=e1[1]*mod_e1;
+                e1[2]=e1[2]*mod_e1;
+
+                e2[0]=e2[0]*mod_e2;
+                e2[1]=e2[1]*mod_e2;
+                e2[2]=e2[2]*mod_e2;
+
+                e3[0]=e3[0]*mod_e3;
+                e3[1]=e3[1]*mod_e3;
+                e3[2]=e3[2]*mod_e3;
+
+
 
          const unsigned int index = 9*atom; // get atom index in tensor array
 
@@ -78,18 +141,16 @@ namespace anisotropy{
                              internal::second_order_tensor[index + 7] * sy +
                              internal::second_order_tensor[index + 8] * sz );
 
-         // Fourth order
-         hx += 4.0 * ( sx * internal::fourth_order_tensor[index + 0] * sx * sx +
-                       sx * internal::fourth_order_tensor[index + 1] * sy * sy +
-                       sx * internal::fourth_order_tensor[index + 2] * sz * sz);
-
-         hy += 4.0 * ( sy * internal::fourth_order_tensor[index + 3] * sx * sx +
-                       sy * internal::fourth_order_tensor[index + 4] * sy * sy +
-                       sy * internal::fourth_order_tensor[index + 5] * sz * sz);
-
-         hz += 4.0 * ( sz * internal::fourth_order_tensor[index + 6] * sx * sx +
-                       sz * internal::fourth_order_tensor[index + 7] * sy * sy +
-                       sz * internal::fourth_order_tensor[index + 8] * sz * sz);
+         // New version choosing uniaxial anisotropy axis (Roberto)
+                 
+            // Changing the basis
+            // sx' = (sx * e1[0] + sy * e1[1]  + sz * e1[2])
+            // sy' = (sx * e2[0] + sy * e2[1]  + sz * e2[2])
+            // sz' = (sx * e3[0] + sy * e3[1]  + sz * e3[2])
+    
+         hx += 4.0 * (  internal::fourth_order_tensor[index + 0] * (pow((sx * e1[0] + sy * e1[1]  + sz * e1[2]),3)*e1[0] + pow((sx * e2[0] + sy * e2[1]  + sz * e2[2]),3)*e2[0] + pow((sx * e3[0] + sy * e3[1]  + sz * e3[2]),3)*e3[0] ));
+         hy += 4.0 * (  internal::fourth_order_tensor[index + 4] * (pow((sx * e1[0] + sy * e1[1]  + sz * e1[2]),3)*e1[1] + pow((sx * e2[0] + sy * e2[1]  + sz * e2[2]),3)*e2[1] + pow((sx * e3[0] + sy * e3[1]  + sz * e3[2]),3)*e3[1] ));
+         hz += 4.0 * (  internal::fourth_order_tensor[index + 8] * (pow((sx * e1[0] + sy * e1[1]  + sz * e1[2]),3)*e1[2] + pow((sx * e2[0] + sy * e2[1]  + sz * e2[2]),3)*e2[2] + pow((sx * e3[0] + sy * e3[1]  + sz * e3[2]),3)*e3[2] ));
 
          // store net field
          field_array_x[atom] += hx;

@@ -236,7 +236,14 @@ namespace anisotropy{
          return true;
       }
       //------------------------------------------------------------
-      test = "cubic-anisotropy-direction";
+      // Anisotropy directions(Roberto)
+      //------------------------------------------------------------
+  
+      //--------------------------------------
+      //Direction 1(Roberto)
+      //--------------------------------------
+
+      test = "cubic-anisotropy-direction1";
       if(word == test){
          // temporary storage container
          std::vector<double> u(3);
@@ -245,9 +252,29 @@ namespace anisotropy{
          // check for sane input and normalise if necessary
          vin::check_for_valid_unit_vector(u, word, line, prefix, "material");
          // Copy sanitised unit vector to material
-         internal::mp[super_index].kc_vector = u;
+         internal::mp[super_index].kc_vector1 = u;
          return true;
       }
+
+      //--------------------------------------
+      //Direction 2(Roberto)
+      //--------------------------------------
+
+      test = "cubic-anisotropy-direction2";
+      if(word == test){
+         // temporary storage container
+         std::vector<double> u(3);
+         // read values from string
+         u = vin::doubles_from_string(value);
+         // check for sane input and normalise if necessary
+         vin::check_for_valid_unit_vector(u, word, line, prefix, "material");
+         // Copy sanitised unit vector to material
+         internal::mp[super_index].kc_vector2 = u;
+         return true;
+      }
+
+
+
       //------------------------------------------------------------
       test="uniaxial-anisotropy-tensor";
       if(word==test){

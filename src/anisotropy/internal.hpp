@@ -96,7 +96,10 @@ namespace anisotropy{
             std::vector<double> kij; // surface/Neel anisotropy pair constant
 
             std::vector<double> ku_vector; // unit vector defining axis for uniaxial anisotropy
-            std::vector<double> kc_vector; // unit vector defining axis for cubic anisotropy
+            
+            std::vector<double> kc_vector1; // first unit vector defining axis for cubic anisotropy (Roberto)
+            std::vector<double> kc_vector2; // second unit vector defining axis for cubic anisotropy (Roberto)            
+            std::vector<double> kc_vector3; // third unit vector defining axis for cubic anisotropy   (Roberto)
 
             std::vector<double> ku_tensor; // uniaxial second order anisotropy tensor
             std::vector<double> kc_tensor; // cubic fourth order anisotropy tensor
@@ -127,11 +130,23 @@ namespace anisotropy{
                ku_vector[2] = 1.0;
 
                // set default uniaxial and cubic directions
-               kc_vector.resize(3); // resize to three elements
+               kc_vector1.resize(3); // resize to three elements (Roberto)
+               kc_vector2.resize(3); // resize to three elements  (Roberto)
+               kc_vector3.resize(3); // resize to three elements   (Roberto)
 
-               kc_vector[0] = 0.0; // set direction alon [0,0,1]
-               kc_vector[1] = 0.0;
-               kc_vector[2] = 1.0;
+               kc_vector1[0] = 1.0; // set direction alon [1,0,0]  (Roberto)
+               kc_vector1[1] = 0.0;
+               kc_vector1[2] = 0.0;
+
+
+               kc_vector2[0] = 0.0; // set direction alon [0,1,0]   (Roberto)
+               kc_vector2[1] = 1.0;
+               kc_vector2[2] = 0.0;
+
+               kc_vector3[0] = 0.0; // set direction alon [0,0,1]    (Roberto)
+               kc_vector3[1] = 0.0;
+               kc_vector3[2] = 1.0;
+
 
                // set tensors as empty by default
                ku_tensor.resize(9, 0.0);
